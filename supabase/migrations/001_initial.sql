@@ -60,22 +60,5 @@ create policy "Anyone can read items of published spaces"
     )
   );
 
-insert into storage.buckets (id, name, public)
-values ('images', 'images', true)
-on conflict (id) do nothing;
-
-create policy "Public read access for images"
-  on storage.objects for select
-  using (bucket_id = 'images');
-
-create policy "Anyone can upload images"
-  on storage.objects for insert
-  with check (bucket_id = 'images');
-
-create policy "Anyone can update images"
-  on storage.objects for update
-  using (bucket_id = 'images');
-
-create policy "Anyone can delete images"
-  on storage.objects for delete
-  using (bucket_id = 'images');
+-- 图片存储在服务器本地 uploads/ 目录，数据库仅保存 URL 路径
+-- 示例：/uploads/backgrounds/1718888888-a8f92c.webp

@@ -1,11 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import {
-  buildImagePath,
-  getExtensionFromFile,
-  getPublicImageUrl,
-} from "@/lib/storage";
+import { deleteFile } from "@/lib/upload";
 import type { Item } from "@/lib/types";
 import { revalidatePath } from "next/cache";
 
@@ -67,43 +63,53 @@ export async function updateItem(
   revalidatePath(`/edit/${spaceId}`);
 }
 
-export async function uploadItemThumbnail(
+export async function updateItemThumbnail(
   itemId: string,
   spaceId: string,
-  formData: FormData
+  thumbnail_url: string
 ) {
-  const file = formData.get("file") as File | null;
-  if (!file) throw new Error("请选择图片文件");
-
   const supabase = createAdminClient();
-  const extension = getExtensionFromFile(file);
-  const path = buildImagePath("thumbnails", spaceId, extension);
-  const buffer = Buffer.from(await file.arrayBuffer());
 
-  const { error: uploadError } = await supabase.storage
-    .from("images")
-    .upload(path, buffer, { contentType: file.type, upsert: false });
+  const { data: item, error: fetchError } = await supabase
+    .from("items")
+    .select("thumbnail_url")
+    .eq("id", itemId)
+    .single();
 
-  if (uploadError) throw new Error(uploadError.message);
-
-  const thumbnail_url = getPublicImageUrl(path);
+  if (fetchError || !item) throw new Error("物品不存在");
 
   const { error } = await supabase
     .from("items")
     .update({ thumbnail_url })
     .eq("id", itemId);
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    await deleteFile(thumbnail_url);
+    throw new Error(error.message);
+  }
+
+  if (item.thumbnail_url && item.thumbnail_url !== thumbnail_url) {
+    await deleteFile(item.thumbnail_url);
+  }
 
   revalidatePath(`/edit/${spaceId}`);
-  return thumbnail_url;
 }
 
 export async function deleteItem(itemId: string, spaceId: string) {
   const supabase = createAdminClient();
 
+  const { data: item, error: fetchError } = await supabase
+    .from("items")
+    .select("thumbnail_url")
+    .eq("id", itemId)
+    .single();
+
+  if (fetchError) throw new Error(fetchError.message);
+
   const { error } = await supabase.from("items").delete().eq("id", itemId);
 
   if (error) throw new Error(error.message);
+
+  await deleteFile(item?.thumbnail_url);
   revalidatePath(`/edit/${spaceId}`);
 }

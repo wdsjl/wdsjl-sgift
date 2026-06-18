@@ -1,11 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import {
-  buildImagePath,
-  getExtensionFromFile,
-  getPublicImageUrl,
-} from "@/lib/storage";
+import { deleteFile, deleteFiles } from "@/lib/upload";
 import type { Space, SpaceWithItems } from "@/lib/types";
 import { customAlphabet } from "nanoid";
 import { revalidatePath } from "next/cache";
@@ -105,32 +101,32 @@ export async function updateSpaceTitle(id: string, title: string) {
   revalidatePath(`/edit/${id}`);
 }
 
-export async function uploadBackground(spaceId: string, formData: FormData) {
-  const file = formData.get("file") as File | null;
-  if (!file) throw new Error("请选择图片文件");
-
+export async function updateSpaceBackground(id: string, background_url: string) {
   const supabase = createAdminClient();
-  const extension = getExtensionFromFile(file);
-  const path = buildImagePath("backgrounds", spaceId, extension);
-  const buffer = Buffer.from(await file.arrayBuffer());
 
-  const { error: uploadError } = await supabase.storage
-    .from("images")
-    .upload(path, buffer, { contentType: file.type, upsert: false });
+  const { data: space, error: fetchError } = await supabase
+    .from("spaces")
+    .select("background_url")
+    .eq("id", id)
+    .single();
 
-  if (uploadError) throw new Error(uploadError.message);
-
-  const background_url = getPublicImageUrl(path);
+  if (fetchError || !space) throw new Error("空间不存在");
 
   const { error } = await supabase
     .from("spaces")
     .update({ background_url })
-    .eq("id", spaceId);
+    .eq("id", id);
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    await deleteFile(background_url);
+    throw new Error(error.message);
+  }
 
-  revalidatePath(`/edit/${spaceId}`);
-  return background_url;
+  if (space.background_url && space.background_url !== background_url) {
+    await deleteFile(space.background_url);
+  }
+
+  revalidatePath(`/edit/${id}`);
 }
 
 export async function publishSpace(id: string) {
@@ -176,5 +172,36 @@ export async function unpublishSpace(id: string) {
     .eq("id", id);
 
   if (error) throw new Error(error.message);
+  revalidatePath(`/edit/${id}`);
+}
+
+export async function deleteSpace(id: string) {
+  const supabase = createAdminClient();
+
+  const { data: space, error: spaceError } = await supabase
+    .from("spaces")
+    .select("background_url")
+    .eq("id", id)
+    .single();
+
+  if (spaceError || !space) throw new Error("空间不存在");
+
+  const { data: items, error: itemsError } = await supabase
+    .from("items")
+    .select("thumbnail_url")
+    .eq("space_id", id);
+
+  if (itemsError) throw new Error(itemsError.message);
+
+  const { error: deleteError } = await supabase
+    .from("spaces")
+    .delete()
+    .eq("id", id);
+
+  if (deleteError) throw new Error(deleteError.message);
+
+  await deleteFile(space.background_url);
+  await deleteFiles((items ?? []).map((item) => item.thumbnail_url));
+
   revalidatePath(`/edit/${id}`);
 }

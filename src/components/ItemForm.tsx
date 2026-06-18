@@ -9,7 +9,7 @@ import { useRef, useState, useTransition } from "react";
 import {
   deleteItem,
   updateItem,
-  uploadItemThumbnail,
+  updateItemThumbnail,
 } from "@/lib/actions/items";
 
 interface ItemFormProps {
@@ -39,8 +39,24 @@ export function ItemForm({ item, spaceId, onDeleted }: ItemFormProps) {
     formData.append("file", file);
 
     startTransition(async () => {
-      const url = await uploadItemThumbnail(item.id, spaceId, formData);
-      setThumbnailUrl(url);
+      try {
+        const response = await fetch("/api/upload/item", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error ?? "物品图片上传失败");
+        }
+
+        await updateItemThumbnail(item.id, spaceId, data.url);
+        setThumbnailUrl(data.url);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "物品图片上传失败");
+      } finally {
+        if (fileRef.current) fileRef.current.value = "";
+      }
     });
   };
 
@@ -79,7 +95,7 @@ export function ItemForm({ item, spaceId, onDeleted }: ItemFormProps) {
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept="image/jpeg,image/png,image/webp"
           className="hidden"
           onChange={handleThumbnailUpload}
         />

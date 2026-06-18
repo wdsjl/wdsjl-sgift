@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-# wdsjl-sgift
-=======
 # WDSJL's Gifts
 
 一个极简、温暖的互动礼物空间应用。在背景图上布置可点击的物品，生成唯一链接分享给 TA，让 TA 慢慢发现每一份心意。
@@ -10,7 +7,8 @@
 - **Next.js 15** (App Router)
 - **TypeScript**
 - **Tailwind CSS 4**
-- **Supabase** (Database + Storage)
+- **PostgreSQL**（通过 Supabase 客户端连接）
+- **本地文件存储**（`uploads/` 目录，sharp + multer 处理）
 
 ## 功能
 
@@ -29,65 +27,81 @@
 - 左上角显示已发现数量
 - 全部发现后显示完成提示
 
+## 图片存储
+
+所有图片保存在项目根目录 `uploads/`：
+
+```
+uploads/
+├── backgrounds/   # 场景背景图（最长边 1920px，webp 80%）
+├── items/         # 物品图片（最长边 800px，webp 80%）
+└── temp/          # 处理过程中的临时文件
+```
+
+上传接口：
+
+| 接口 | 限制 | 说明 |
+|------|------|------|
+| `POST /api/upload/background` | 最大 10MB | 返回 `{ "url": "/uploads/backgrounds/xxx.webp" }` |
+| `POST /api/upload/item` | 最大 5MB | 返回 `{ "url": "/uploads/items/xxx.webp" }` |
+
+静态访问：`https://domain.com/uploads/backgrounds/xxx.webp`
+
 ## 快速开始
 
-### 1. 创建 Supabase 项目
+### 1. 配置数据库
 
-在 [Supabase](https://supabase.com) 创建新项目。
+在 PostgreSQL（或 Supabase）中执行 `supabase/migrations/001_initial.sql`。
 
-### 2. 运行数据库迁移
-
-在 Supabase SQL Editor 中执行 `supabase/migrations/001_initial.sql`。
-
-这会创建 `spaces`、`items` 表，以及 `images` 存储桶。
-
-### 3. 配置环境变量
+### 2. 配置环境变量
 
 ```bash
 cp .env.local.example .env.local
 ```
 
-填写以下变量：
-
 | 变量 | 说明 |
 |------|------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase 项目 URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key |
+| `NEXT_PUBLIC_SUPABASE_URL` | 数据库 API 地址 |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon key |
+| `SUPABASE_SERVICE_ROLE_KEY` | service role key（仅服务端） |
 | `NEXT_PUBLIC_APP_URL` | 应用地址，如 `http://localhost:3000` |
 
-### 4. 启动开发服务器
+### 3. 启动
 
 ```bash
 npm install
 npm run dev
 ```
 
-访问 [http://localhost:3000](http://localhost:3000)。
+应用启动时会自动创建 `uploads/` 目录结构。
+
+## Windows Server 部署
+
+```bash
+npm install
+npm run build
+npm run start
+```
+
+确保运行用户对 `uploads/` 目录有读写权限。推荐使用 PM2 或 IIS + iisnode 保持进程运行。
 
 ## 项目结构
 
 ```
 src/
 ├── app/
-│   ├── page.tsx          # 首页
+│   ├── api/upload/       # 图片上传接口
+│   ├── uploads/          # 静态图片访问路由
 │   ├── create/           # 创建空间
 │   ├── edit/[id]/        # 编辑空间
 │   └── s/[slug]/         # 浏览空间
-├── components/           # UI 组件
-└── lib/
-    ├── actions/          # Server Actions
-    ├── supabase/         # Supabase 客户端
-    └── types.ts          # 类型定义
-supabase/
-└── migrations/           # 数据库迁移
+├── lib/
+│   ├── upload.ts         # 图片处理与文件操作
+│   ├── multer.ts         # 上传解析
+│   └── actions/          # Server Actions
+uploads/                  # 本地图片存储（运行时自动创建）
 ```
-
-## 部署
-
-推荐部署到 [Vercel](https://vercel.com)，配置相同的环境变量即可。
 
 ## 许可证
 
 MIT
->>>>>>> 78915c9 (feat: 实现 WDSJL's Gifts 互动礼物空间应用)

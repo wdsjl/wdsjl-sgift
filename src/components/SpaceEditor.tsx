@@ -9,8 +9,8 @@ import { useCallback, useRef, useState, useTransition } from "react";
 import {
   publishSpace,
   unpublishSpace,
+  updateSpaceBackground,
   updateSpaceTitle,
-  uploadBackground,
 } from "@/lib/actions/spaces";
 import { createItem, updateItem } from "@/lib/actions/items";
 import { useRouter } from "next/navigation";
@@ -51,9 +51,25 @@ export function SpaceEditor({ space: initialSpace }: SpaceEditorProps) {
     formData.append("file", file);
 
     startTransition(async () => {
-      const url = await uploadBackground(space.id, formData);
-      setSpace((prev) => ({ ...prev, background_url: url }));
-      setMessage("背景图已上传");
+      try {
+        const response = await fetch("/api/upload/background", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error ?? "背景图上传失败");
+        }
+
+        await updateSpaceBackground(space.id, data.url);
+        setSpace((prev) => ({ ...prev, background_url: data.url }));
+        setMessage("背景图已上传");
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "背景图上传失败");
+      } finally {
+        if (bgFileRef.current) bgFileRef.current.value = "";
+      }
     });
   };
 
@@ -153,7 +169,7 @@ export function SpaceEditor({ space: initialSpace }: SpaceEditorProps) {
         <input
           ref={bgFileRef}
           type="file"
-          accept="image/*"
+          accept="image/jpeg,image/png,image/webp"
           className="hidden"
           onChange={handleBackgroundUpload}
         />
