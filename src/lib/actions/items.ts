@@ -1,38 +1,27 @@
 "use server";
 
-import { createAdminClient } from "@/lib/supabase/admin";
+import { mapItem, query } from "@/lib/db";
 import { deleteFile } from "@/lib/upload";
 import type { Item } from "@/lib/types";
 import { revalidatePath } from "next/cache";
 
 export async function createItem(spaceId: string): Promise<Item> {
-  const supabase = createAdminClient();
+  const { rows: countRows } = await query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM items WHERE space_id = $1`,
+    [spaceId]
+  );
 
-  const { count } = await supabase
-    .from("items")
-    .select("*", { count: "exact", head: true })
-    .eq("space_id", spaceId);
+  const sortOrder = Number(countRows[0]?.count ?? 0);
 
-  const { data, error } = await supabase
-    .from("items")
-    .insert({
-      space_id: spaceId,
-      title: "新物品",
-      position_x: 50,
-      position_y: 50,
-      sort_order: count ?? 0,
-    })
-    .select()
-    .single();
+  const { rows } = await query(
+    `INSERT INTO items (space_id, title, position_x, position_y, sort_order)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING *`,
+    [spaceId, "新物品", 50, 50, sortOrder]
+  );
 
-  if (error) throw new Error(error.message);
   revalidatePath(`/edit/${spaceId}`);
-
-  return {
-    ...(data as Item),
-    position_x: Number(data.position_x),
-    position_y: Number(data.position_y),
-  };
+  return mapItem(rows[0]);
 }
 
 export async function updateItem(
@@ -45,21 +34,37 @@ export async function updateItem(
     position_y?: number;
   }
 ) {
-  const supabase = createAdminClient();
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  let index = 1;
 
-  const payload: Record<string, string | number> = {};
-  if (updates.title !== undefined) payload.title = updates.title;
-  if (updates.description !== undefined)
-    payload.description = updates.description;
-  if (updates.position_x !== undefined) payload.position_x = updates.position_x;
-  if (updates.position_y !== undefined) payload.position_y = updates.position_y;
+  if (updates.title !== undefined) {
+    fields.push(`title = $${index++}`);
+    values.push(updates.title);
+  }
+  if (updates.description !== undefined) {
+    fields.push(`description = $${index++}`);
+    values.push(updates.description);
+  }
+  if (updates.position_x !== undefined) {
+    fields.push(`position_x = $${index++}`);
+    values.push(updates.position_x);
+  }
+  if (updates.position_y !== undefined) {
+    fields.push(`position_y = $${index++}`);
+    values.push(updates.position_y);
+  }
 
-  const { error } = await supabase
-    .from("items")
-    .update(payload)
-    .eq("id", itemId);
+  if (fields.length === 0) return;
 
-  if (error) throw new Error(error.message);
+  values.push(itemId);
+
+  const { rowCount } = await query(
+    `UPDATE items SET ${fields.join(", ")} WHERE id = $${index}`,
+    values
+  );
+
+  if (!rowCount) throw new Error("物品不存在");
   revalidatePath(`/edit/${spaceId}`);
 }
 
@@ -68,48 +73,42 @@ export async function updateItemThumbnail(
   spaceId: string,
   thumbnail_url: string
 ) {
-  const supabase = createAdminClient();
+  const { rows } = await query(
+    `SELECT thumbnail_url FROM items WHERE id = $1`,
+    [itemId]
+  );
 
-  const { data: item, error: fetchError } = await supabase
-    .from("items")
-    .select("thumbnail_url")
-    .eq("id", itemId)
-    .single();
+  if (rows.length === 0) throw new Error("物品不存在");
 
-  if (fetchError || !item) throw new Error("物品不存在");
+  const oldUrl = rows[0].thumbnail_url as string | null;
 
-  const { error } = await supabase
-    .from("items")
-    .update({ thumbnail_url })
-    .eq("id", itemId);
+  const { rowCount } = await query(
+    `UPDATE items SET thumbnail_url = $1 WHERE id = $2`,
+    [thumbnail_url, itemId]
+  );
 
-  if (error) {
+  if (!rowCount) {
     await deleteFile(thumbnail_url);
-    throw new Error(error.message);
+    throw new Error("物品不存在");
   }
 
-  if (item.thumbnail_url && item.thumbnail_url !== thumbnail_url) {
-    await deleteFile(item.thumbnail_url);
+  if (oldUrl && oldUrl !== thumbnail_url) {
+    await deleteFile(oldUrl);
   }
 
   revalidatePath(`/edit/${spaceId}`);
 }
 
 export async function deleteItem(itemId: string, spaceId: string) {
-  const supabase = createAdminClient();
+  const { rows } = await query(
+    `SELECT thumbnail_url FROM items WHERE id = $1`,
+    [itemId]
+  );
 
-  const { data: item, error: fetchError } = await supabase
-    .from("items")
-    .select("thumbnail_url")
-    .eq("id", itemId)
-    .single();
+  const { rowCount } = await query(`DELETE FROM items WHERE id = $1`, [itemId]);
 
-  if (fetchError) throw new Error(fetchError.message);
+  if (!rowCount) throw new Error("物品不存在");
 
-  const { error } = await supabase.from("items").delete().eq("id", itemId);
-
-  if (error) throw new Error(error.message);
-
-  await deleteFile(item?.thumbnail_url);
+  await deleteFile(rows[0]?.thumbnail_url as string | null);
   revalidatePath(`/edit/${spaceId}`);
 }

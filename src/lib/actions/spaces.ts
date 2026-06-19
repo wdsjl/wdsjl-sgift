@@ -1,6 +1,6 @@
 "use server";
 
-import { createAdminClient } from "@/lib/supabase/admin";
+import { mapItem, mapSpace, query } from "@/lib/db";
 import { deleteFile, deleteFiles } from "@/lib/upload";
 import type { Space, SpaceWithItems } from "@/lib/types";
 import { customAlphabet } from "nanoid";
@@ -12,149 +12,118 @@ const generateSlug = customAlphabet(
 );
 
 export async function createSpace(title?: string): Promise<Space> {
-  const supabase = createAdminClient();
   const slug = generateSlug();
+  const spaceTitle = title?.trim() || "未命名空间";
 
-  const { data, error } = await supabase
-    .from("spaces")
-    .insert({
-      slug,
-      title: title?.trim() || "未命名空间",
-    })
-    .select()
-    .single();
+  const { rows } = await query(
+    `INSERT INTO spaces (slug, title)
+     VALUES ($1, $2)
+     RETURNING *`,
+    [slug, spaceTitle]
+  );
 
-  if (error) throw new Error(error.message);
-  return data as Space;
+  return mapSpace(rows[0]);
 }
 
 export async function getSpaceById(id: string): Promise<SpaceWithItems | null> {
-  const supabase = createAdminClient();
+  const { rows: spaceRows } = await query(
+    `SELECT * FROM spaces WHERE id = $1`,
+    [id]
+  );
 
-  const { data: space, error: spaceError } = await supabase
-    .from("spaces")
-    .select("*")
-    .eq("id", id)
-    .single();
+  if (spaceRows.length === 0) return null;
 
-  if (spaceError || !space) return null;
-
-  const { data: items, error: itemsError } = await supabase
-    .from("items")
-    .select("*")
-    .eq("space_id", id)
-    .order("sort_order", { ascending: true });
-
-  if (itemsError) throw new Error(itemsError.message);
+  const { rows: itemRows } = await query(
+    `SELECT * FROM items WHERE space_id = $1 ORDER BY sort_order ASC`,
+    [id]
+  );
 
   return {
-    ...(space as Space),
-    items: (items ?? []).map((item) => ({
-      ...item,
-      position_x: Number(item.position_x),
-      position_y: Number(item.position_y),
-    })),
+    ...mapSpace(spaceRows[0]),
+    items: itemRows.map(mapItem),
   };
 }
 
 export async function getPublishedSpaceBySlug(
   slug: string
 ): Promise<SpaceWithItems | null> {
-  const supabase = createAdminClient();
+  const { rows: spaceRows } = await query(
+    `SELECT * FROM spaces WHERE slug = $1 AND is_published = true`,
+    [slug]
+  );
 
-  const { data: space, error: spaceError } = await supabase
-    .from("spaces")
-    .select("*")
-    .eq("slug", slug)
-    .eq("is_published", true)
-    .single();
+  if (spaceRows.length === 0) return null;
 
-  if (spaceError || !space) return null;
+  const space = mapSpace(spaceRows[0]);
 
-  const { data: items, error: itemsError } = await supabase
-    .from("items")
-    .select("*")
-    .eq("space_id", space.id)
-    .order("sort_order", { ascending: true });
-
-  if (itemsError) throw new Error(itemsError.message);
+  const { rows: itemRows } = await query(
+    `SELECT * FROM items WHERE space_id = $1 ORDER BY sort_order ASC`,
+    [space.id]
+  );
 
   return {
-    ...(space as Space),
-    items: (items ?? []).map((item) => ({
-      ...item,
-      position_x: Number(item.position_x),
-      position_y: Number(item.position_y),
-    })),
+    ...space,
+    items: itemRows.map(mapItem),
   };
 }
 
 export async function updateSpaceTitle(id: string, title: string) {
-  const supabase = createAdminClient();
+  const { rowCount } = await query(
+    `UPDATE spaces SET title = $1 WHERE id = $2`,
+    [title.trim() || "未命名空间", id]
+  );
 
-  const { error } = await supabase
-    .from("spaces")
-    .update({ title: title.trim() || "未命名空间" })
-    .eq("id", id);
-
-  if (error) throw new Error(error.message);
+  if (!rowCount) throw new Error("空间不存在");
   revalidatePath(`/edit/${id}`);
 }
 
 export async function updateSpaceBackground(id: string, background_url: string) {
-  const supabase = createAdminClient();
+  const { rows } = await query(
+    `SELECT background_url FROM spaces WHERE id = $1`,
+    [id]
+  );
 
-  const { data: space, error: fetchError } = await supabase
-    .from("spaces")
-    .select("background_url")
-    .eq("id", id)
-    .single();
+  if (rows.length === 0) throw new Error("空间不存在");
 
-  if (fetchError || !space) throw new Error("空间不存在");
+  const oldUrl = rows[0].background_url as string | null;
 
-  const { error } = await supabase
-    .from("spaces")
-    .update({ background_url })
-    .eq("id", id);
+  const { rowCount } = await query(
+    `UPDATE spaces SET background_url = $1 WHERE id = $2`,
+    [background_url, id]
+  );
 
-  if (error) {
+  if (!rowCount) {
     await deleteFile(background_url);
-    throw new Error(error.message);
+    throw new Error("空间不存在");
   }
 
-  if (space.background_url && space.background_url !== background_url) {
-    await deleteFile(space.background_url);
+  if (oldUrl && oldUrl !== background_url) {
+    await deleteFile(oldUrl);
   }
 
   revalidatePath(`/edit/${id}`);
 }
 
 export async function publishSpace(id: string) {
-  const supabase = createAdminClient();
+  const { rows } = await query(
+    `SELECT slug, background_url FROM spaces WHERE id = $1`,
+    [id]
+  );
 
-  const { data: space, error: fetchError } = await supabase
-    .from("spaces")
-    .select("slug, background_url")
-    .eq("id", id)
-    .single();
+  if (rows.length === 0) throw new Error("空间不存在");
 
-  if (fetchError || !space) throw new Error("空间不存在");
+  const space = rows[0];
   if (!space.background_url) throw new Error("请先上传背景图");
 
-  const { count, error: countError } = await supabase
-    .from("items")
-    .select("*", { count: "exact", head: true })
-    .eq("space_id", id);
+  const { rows: countRows } = await query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM items WHERE space_id = $1`,
+    [id]
+  );
 
-  if (countError) throw new Error(countError.message);
-  if (!count) throw new Error("请至少添加一个物品");
+  const itemCount = Number(countRows[0]?.count ?? 0);
+  if (!itemCount) throw new Error("请至少添加一个物品");
 
-  const { error } = await supabase
-    .from("spaces")
-    .update({ is_published: true })
-    .eq("id", id);
-
-  if (error) throw new Error(error.message);
+  await query(`UPDATE spaces SET is_published = true WHERE id = $1`, [id]);
 
   revalidatePath(`/edit/${id}`);
   revalidatePath(`/s/${space.slug}`);
@@ -164,44 +133,34 @@ export async function publishSpace(id: string) {
 }
 
 export async function unpublishSpace(id: string) {
-  const supabase = createAdminClient();
+  const { rowCount } = await query(
+    `UPDATE spaces SET is_published = false WHERE id = $1`,
+    [id]
+  );
 
-  const { error } = await supabase
-    .from("spaces")
-    .update({ is_published: false })
-    .eq("id", id);
-
-  if (error) throw new Error(error.message);
+  if (!rowCount) throw new Error("空间不存在");
   revalidatePath(`/edit/${id}`);
 }
 
 export async function deleteSpace(id: string) {
-  const supabase = createAdminClient();
+  const { rows: spaceRows } = await query(
+    `SELECT background_url FROM spaces WHERE id = $1`,
+    [id]
+  );
 
-  const { data: space, error: spaceError } = await supabase
-    .from("spaces")
-    .select("background_url")
-    .eq("id", id)
-    .single();
+  if (spaceRows.length === 0) throw new Error("空间不存在");
 
-  if (spaceError || !space) throw new Error("空间不存在");
+  const { rows: itemRows } = await query(
+    `SELECT thumbnail_url FROM items WHERE space_id = $1`,
+    [id]
+  );
 
-  const { data: items, error: itemsError } = await supabase
-    .from("items")
-    .select("thumbnail_url")
-    .eq("space_id", id);
+  const { rowCount } = await query(`DELETE FROM spaces WHERE id = $1`, [id]);
 
-  if (itemsError) throw new Error(itemsError.message);
+  if (!rowCount) throw new Error("空间删除失败");
 
-  const { error: deleteError } = await supabase
-    .from("spaces")
-    .delete()
-    .eq("id", id);
-
-  if (deleteError) throw new Error(deleteError.message);
-
-  await deleteFile(space.background_url);
-  await deleteFiles((items ?? []).map((item) => item.thumbnail_url));
+  await deleteFile(spaceRows[0].background_url as string | null);
+  await deleteFiles(itemRows.map((row) => row.thumbnail_url as string | null));
 
   revalidatePath(`/edit/${id}`);
 }

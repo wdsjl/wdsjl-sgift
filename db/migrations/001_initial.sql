@@ -1,8 +1,8 @@
--- WDSJL's Gifts - Initial Schema
+-- WDSJL's Gifts - PostgreSQL Schema（自建数据库，无 Supabase）
 
 create extension if not exists "pgcrypto";
 
-create table public.spaces (
+create table if not exists spaces (
   id uuid primary key default gen_random_uuid(),
   slug text unique not null,
   title text not null default '未命名空间',
@@ -12,9 +12,9 @@ create table public.spaces (
   updated_at timestamptz not null default now()
 );
 
-create table public.items (
+create table if not exists items (
   id uuid primary key default gen_random_uuid(),
-  space_id uuid not null references public.spaces(id) on delete cascade,
+  space_id uuid not null references spaces(id) on delete cascade,
   title text not null default '',
   description text not null default '',
   thumbnail_url text,
@@ -25,10 +25,10 @@ create table public.items (
   updated_at timestamptz not null default now()
 );
 
-create index items_space_id_idx on public.items(space_id);
-create index spaces_slug_idx on public.spaces(slug);
+create index if not exists items_space_id_idx on items(space_id);
+create index if not exists spaces_slug_idx on spaces(slug);
 
-create or replace function public.set_updated_at()
+create or replace function set_updated_at()
 returns trigger as $$
 begin
   new.updated_at = now();
@@ -36,29 +36,15 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists spaces_updated_at on spaces;
 create trigger spaces_updated_at
-  before update on public.spaces
-  for each row execute function public.set_updated_at();
+  before update on spaces
+  for each row execute function set_updated_at();
 
+drop trigger if exists items_updated_at on items;
 create trigger items_updated_at
-  before update on public.items
-  for each row execute function public.set_updated_at();
-
-alter table public.spaces enable row level security;
-alter table public.items enable row level security;
-
-create policy "Anyone can read published spaces"
-  on public.spaces for select
-  using (is_published = true);
-
-create policy "Anyone can read items of published spaces"
-  on public.items for select
-  using (
-    exists (
-      select 1 from public.spaces
-      where spaces.id = items.space_id and spaces.is_published = true
-    )
-  );
+  before update on items
+  for each row execute function set_updated_at();
 
 -- 图片存储在服务器本地 uploads/ 目录，数据库仅保存 URL 路径
 -- 示例：/uploads/backgrounds/1718888888-a8f92c.webp
